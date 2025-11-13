@@ -235,6 +235,9 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // タブバーのAutoLayoutを確定させる
+        tabBarStackView.layoutIfNeeded()
+
         // 回転などで幅が変わったら現在ページに再スナップ
         let x = CGFloat(selectedIndex) * contentScrollView.bounds.width
         contentScrollView.setContentOffset(CGPoint(x: x, y: 0), animated: false)
