@@ -21,7 +21,7 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         v.axis = .horizontal
         v.distribution = .fillEqually   // 収まると等幅／はみ出たらスクロール
         v.alignment = .fill
-        v.spacing = 0
+        v.spacing = 8
         return v
     }()
     private let indicatorView: UIView = {
@@ -80,10 +80,12 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         indicatorLeading = indicatorView.leadingAnchor.constraint(equalTo: tabBarStackView.leadingAnchor)
         indicatorWidth = indicatorView.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            indicatorView.heightAnchor.constraint(equalToConstant: 2),
+            indicatorView.heightAnchor.constraint(equalToConstant: 4),
             indicatorView.bottomAnchor.constraint(equalTo: tabBarStackView.bottomAnchor),
             indicatorLeading!, indicatorWidth!
         ])
+        tabBarStackView.isLayoutMarginsRelativeArrangement = true
+        tabBarStackView.layoutMargins = .init(top: 0, left: 8, bottom: 0, right: 8)
 
         // --- Content layout (no stack view) ---
         view.addSubview(contentScrollView)
@@ -208,19 +210,23 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
               tabBarStackView.arrangedSubviews.count == viewControllers.count else { return }
 
         let pageFloat = max(0, contentScrollView.contentOffset.x / contentScrollView.bounds.width)
-        let left = Int(floor(pageFloat))
-        let progress = pageFloat - CGFloat(left)
+        let leftIdx = Int(floor(pageFloat))
+        let progress = pageFloat - CGFloat(leftIdx)
 
-        let fromIdx = min(left, tabBarStackView.arrangedSubviews.count - 1)
-        let toIdx = min(fromIdx + 1, tabBarStackView.arrangedSubviews.count - 1)
-        let fromTab = tabBarStackView.arrangedSubviews[fromIdx]
-        let toTab = tabBarStackView.arrangedSubviews[toIdx]
+        let fromIdx = min(leftIdx, tabBarStackView.arrangedSubviews.count - 1)
+        let toIdx   = min(fromIdx + 1, tabBarStackView.arrangedSubviews.count - 1)
 
-        let fromX = fromTab.frame.minX, toX = toTab.frame.minX
-        let fromW = fromTab.frame.width, toW = toTab.frame.width
+        // レイアウト確定してからフレーム取得
+        tabBarStackView.layoutIfNeeded()
 
-        indicatorLeading?.constant = fromX + (toX - fromX) * progress
-        indicatorWidth?.constant  = fromW + (toW - fromW) * progress
+        let f0 = indicatorFrame(for: fromIdx)
+        let f1 = indicatorFrame(for: toIdx)
+
+        let nowX = f0.x + (f1.x - f0.x) * progress
+        let nowW = f0.w + (f1.w - f0.w) * progress
+
+        indicatorLeading?.constant = nowX
+        indicatorWidth?.constant  = nowW
         tabBarStackView.layoutIfNeeded()
     }
 
@@ -245,11 +251,38 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         syncSelectedIndexAndCenterTab()
     }
 
+    private func indicatorFrame(for idx: Int) -> (x: CGFloat, w: CGFloat) {
+        let tabs = tabBarStackView.arrangedSubviews
+        guard idx >= 0, idx < tabs.count else { return (0, 0) }
+
+        let tab = tabs[idx]
+        let spacing = tabBarStackView.spacing
+
+        // デフォルトは左右に spacing ずつ拡張
+        var left = spacing
+        var right = spacing
+
+        // 先頭・末尾は外側マージンを採用（設定していなければ0）
+        if idx == 0 {
+            left = tabBarStackView.isLayoutMarginsRelativeArrangement ? tabBarStackView.layoutMargins.left : 0
+        }
+        if idx == tabs.count - 1 {
+            right = tabBarStackView.isLayoutMarginsRelativeArrangement ? tabBarStackView.layoutMargins.right : 0
+        }
+
+        let x = tab.frame.minX - left
+        let w = tab.frame.width + left + right
+        return (x, w)
+    }
+
     private func snapIndicatorToSelected() {
         guard selectedIndex < tabBarStackView.arrangedSubviews.count else { return }
-        let tab = tabBarStackView.arrangedSubviews[selectedIndex]
-        indicatorLeading?.constant = tab.frame.minX
-        indicatorWidth?.constant = tab.frame.width
+        // フレーム参照前にレイアウト確定
+        tabBarStackView.layoutIfNeeded()
+
+        let f = indicatorFrame(for: selectedIndex)
+        indicatorLeading?.constant = f.x
+        indicatorWidth?.constant  = f.w
         tabBarStackView.layoutIfNeeded()
     }
 }
