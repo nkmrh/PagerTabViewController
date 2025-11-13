@@ -13,7 +13,7 @@ private final class PaddingLabel: UILabel {
     }
 }
 
-final class BadgeButton: UIControl { // ← UIButtonではなくUIControlに
+final class BadgeButton: UIControl {
     private let title = UILabel()
     private let badge = PaddingLabel(insets: .init(top: 2, left: 6, bottom: 2, right: 6))
     private let hstack = UIStackView()

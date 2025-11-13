@@ -1,17 +1,24 @@
-//
-//  PagerTabViewControllerApp.swift
-//  PagerTabViewController
-//
-//  Created by 中村　肇 on 2025/11/13.
-//
-
 import SwiftUI
 
 @main
 struct PagerTabViewControllerApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TabView {
+                ContentView(vcCount: 1)
+                    .tabItem {
+                        Image(systemName: "1.circle.fill") //タブバーの①
+                    }
+                ContentView(vcCount: 2)
+                    .tabItem {
+                        Image(systemName: "2.circle.fill") //タブバーの①
+                    }
+                ContentView(vcCount: 20)
+                    .tabItem {
+                        Image(systemName: "20.circle.fill") //タブバーの①
+                    }
+            }
+
         }
     }
 }

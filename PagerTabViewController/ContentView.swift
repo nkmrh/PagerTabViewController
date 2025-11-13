@@ -346,9 +346,10 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 // ==== SwiftUI Preview ====
 
 struct PreviewWrapperViewController: UIViewControllerRepresentable {
+    let vcCount: Int
     func makeUIViewController(context: Context) -> some UIViewController {
         let pager = PagerTabViewController()
-        pager.viewControllers = (0..<5).map { _ in
+        pager.viewControllers = (0..<vcCount).map { _ in
             let vc = UIViewController();
             vc.view.backgroundColor = generateRandomColor()
             return vc
@@ -360,10 +361,11 @@ struct PreviewWrapperViewController: UIViewControllerRepresentable {
 }
 
 struct ContentView: View {
-    var body: some View { PreviewWrapperViewController() }
+    var vcCount: Int
+    var body: some View { PreviewWrapperViewController(vcCount: vcCount) }
 }
 
-#Preview { ContentView() }
+#Preview { ContentView(vcCount: 20) }
 
 private func generateRandomColor() -> UIColor {
     let r = CGFloat.random(in: 0 ... 255) / 255.0
