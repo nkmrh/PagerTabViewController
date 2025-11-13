@@ -29,10 +29,10 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         v.backgroundColor = .white
         return v
     }()
-    private var indicatorLeading: NSLayoutConstraint?
-    private var indicatorWidth: NSLayoutConstraint?
+    private var indicatorLeadingConstraint: NSLayoutConstraint?
+    private var indicatorWidthConstraint: NSLayoutConstraint?
 
-    // MARK: UI (Content) - StackViewは使わない
+    // MARK: UI (Content)
     private let contentScrollView: UIScrollView = {
         let v = UIScrollView()
         v.isPagingEnabled = true
@@ -41,6 +41,8 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         v.showsHorizontalScrollIndicator = false
         v.showsVerticalScrollIndicator = false
         v.isDirectionalLockEnabled = true
+        v.contentInsetAdjustmentBehavior = .never
+        v.decelerationRate = .fast
         return v
     }()
 
@@ -72,22 +74,23 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
             tabBarStackView.trailingAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.trailingAnchor),
             tabBarStackView.bottomAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.bottomAnchor),
             tabBarStackView.heightAnchor.constraint(equalTo: tabBarScrollView.frameLayoutGuide.heightAnchor),
-            tabBarStackView.widthAnchor.constraint(greaterThanOrEqualTo: tabBarScrollView.frameLayoutGuide.widthAnchor)
-        ])
-
-        tabBarStackView.addSubview(indicatorView)
-        indicatorView.translatesAutoresizingMaskIntoConstraints = false
-        indicatorLeading = indicatorView.leadingAnchor.constraint(equalTo: tabBarStackView.leadingAnchor)
-        indicatorWidth = indicatorView.widthAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            indicatorView.heightAnchor.constraint(equalToConstant: 4),
-            indicatorView.bottomAnchor.constraint(equalTo: tabBarStackView.bottomAnchor),
-            indicatorLeading!, indicatorWidth!
+            tabBarStackView.widthAnchor.constraint(greaterThanOrEqualTo: tabBarScrollView.frameLayoutGuide.widthAnchor),
         ])
         tabBarStackView.isLayoutMarginsRelativeArrangement = true
         tabBarStackView.layoutMargins = .init(top: 0, left: 8, bottom: 0, right: 8)
 
-        // --- Content layout (no stack view) ---
+        tabBarStackView.addSubview(indicatorView)
+        indicatorView.translatesAutoresizingMaskIntoConstraints = false
+        indicatorLeadingConstraint = indicatorView.leadingAnchor.constraint(equalTo: tabBarStackView.leadingAnchor)
+        indicatorWidthConstraint = indicatorView.widthAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            indicatorView.heightAnchor.constraint(equalToConstant: 4),
+            indicatorView.bottomAnchor.constraint(equalTo: tabBarStackView.bottomAnchor),
+            indicatorLeadingConstraint!,
+            indicatorWidthConstraint!,
+        ])
+
+        // --- Content layout ---
         view.addSubview(contentScrollView)
         contentScrollView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -111,13 +114,12 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
             b.setTitle(vc.title ?? "Tab \(i+1)", for: .normal)
             b.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
             b.setTitleColor(.white, for: .normal)
-            b.backgroundColor = .green
             b.tag = i
             b.addTarget(self, action: #selector(didTapTab(_:)), for: .touchUpInside)
             tabBarStackView.addArrangedSubview(b)
         }
 
-        // Pages (NO UIStackView)
+        // Pages
         // 既存子VC/ページビューを除去
         children.forEach { child in
             child.willMove(toParent: nil)
@@ -145,8 +147,8 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
                 container.widthAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.widthAnchor),
                 container.heightAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.heightAnchor)
             ]
-            if let prev = previousTrailing {
-                constraints.append(container.leadingAnchor.constraint(equalTo: prev))
+            if let previousTrailing {
+                constraints.append(container.leadingAnchor.constraint(equalTo: previousTrailing))
             } else {
                 constraints.append(container.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.leadingAnchor))
             }
@@ -167,8 +169,8 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         }
 
         // 最後のページで contentLayoutGuide.trailing を閉じる
-        if let lastTrailing = previousTrailing {
-            lastTrailing.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor).isActive = true
+        if let previousTrailing {
+            previousTrailing.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor).isActive = true
         } else {
             // ページが0枚のときの幅/高さゼロ問題を避ける軽い対策
             contentScrollView.contentLayoutGuide.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor).isActive = true
@@ -196,12 +198,19 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 
     private func scrollSelectedTabIntoView(animated: Bool) {
         guard selectedIndex < tabBarStackView.arrangedSubviews.count else { return }
-        let selected = tabBarStackView.arrangedSubviews[selectedIndex]
-        let frame = selected.convert(selected.bounds, to: tabBarScrollView)
-        let targetX = max(0, frame.midX - tabBarScrollView.bounds.width / 2)
+
+        // レイアウト確定
+        tabBarScrollView.layoutIfNeeded()
+        tabBarStackView.layoutIfNeeded()
+
+        // ★ インジケータのフレームで中央寄せ
+        let f = indicatorFrame(for: selectedIndex)
+        let midX = f.x + f.w / 2
+        let targetX = max(0, midX - tabBarScrollView.bounds.width / 2)
         let maxX = max(0, tabBarScrollView.contentSize.width - tabBarScrollView.bounds.width)
         tabBarScrollView.setContentOffset(CGPoint(x: min(targetX, maxX), y: 0), animated: animated)
     }
+
 
     // MARK: Indicator follow (interactive)
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -209,27 +218,27 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
               contentScrollView.bounds.width > 0,
               tabBarStackView.arrangedSubviews.count == viewControllers.count else { return }
 
+        // ★ 追加：タブバー側のレイアウトも確定
+        tabBarScrollView.layoutIfNeeded()
+        tabBarStackView.layoutIfNeeded()
+
         let pageFloat = max(0, contentScrollView.contentOffset.x / contentScrollView.bounds.width)
         let leftIdx = Int(floor(pageFloat))
         let progress = pageFloat - CGFloat(leftIdx)
 
         let fromIdx = min(leftIdx, tabBarStackView.arrangedSubviews.count - 1)
-        let toIdx   = min(fromIdx + 1, tabBarStackView.arrangedSubviews.count - 1)
-
-        // レイアウト確定してからフレーム取得
-        tabBarStackView.layoutIfNeeded()
+        let toIdx = min(fromIdx + 1, tabBarStackView.arrangedSubviews.count - 1)
 
         let f0 = indicatorFrame(for: fromIdx)
         let f1 = indicatorFrame(for: toIdx)
-
         let nowX = f0.x + (f1.x - f0.x) * progress
         let nowW = f0.w + (f1.w - f0.w) * progress
 
-        indicatorLeading?.constant = nowX
-        indicatorWidth?.constant  = nowW
+        indicatorLeadingConstraint?.constant = nowX
+        indicatorWidthConstraint?.constant  = nowW
         tabBarStackView.layoutIfNeeded()
 
-        // タブバーもインジケータの中心に追従してスクロール
+        // 追従スクロール
         let midX = nowX + nowW / 2
         let targetX = max(0, midX - tabBarScrollView.bounds.width / 2)
         let maxX = max(0, tabBarScrollView.contentSize.width - tabBarScrollView.bounds.width)
@@ -247,14 +256,15 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // タブバーのAutoLayoutを確定させる
         tabBarStackView.layoutIfNeeded()
 
-        // 回転などで幅が変わったら現在ページに再スナップ
+        // 現在ページに再スナップ（非アニメ）
         let x = CGFloat(selectedIndex) * contentScrollView.bounds.width
         contentScrollView.setContentOffset(CGPoint(x: x, y: 0), animated: false)
         snapIndicatorToSelected()
-        syncSelectedIndexAndCenterTab()
+
+        // ★ 非アニメで中央寄せ（従来の sync... の代わり）
+        scrollSelectedTabIntoView(animated: false)
     }
 
     private func indicatorFrame(for idx: Int) -> (x: CGFloat, w: CGFloat) {
@@ -264,11 +274,11 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         let tab = tabs[idx]
         let spacing = tabBarStackView.spacing
 
-        // デフォルトは左右に spacing ずつ拡張
-        var left = spacing
-        var right = spacing
+        // 内側は spacing/2 ずつ拡張（両隣の隙間8ptを均等に分ける）
+        var left  = spacing / 2
+        var right = spacing / 2
 
-        // 先頭・末尾は外側マージンを採用（設定していなければ0）
+        // 先頭と末尾だけは外側マージンを使う（layoutMarginsRelativeArrangement を尊重）
         if idx == 0 {
             left = tabBarStackView.isLayoutMarginsRelativeArrangement ? tabBarStackView.layoutMargins.left : 0
         }
@@ -287,8 +297,8 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         tabBarStackView.layoutIfNeeded()
 
         let f = indicatorFrame(for: selectedIndex)
-        indicatorLeading?.constant = f.x
-        indicatorWidth?.constant  = f.w
+        indicatorLeadingConstraint?.constant = f.x
+        indicatorWidthConstraint?.constant  = f.w
         tabBarStackView.layoutIfNeeded()
     }
 }
