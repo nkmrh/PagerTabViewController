@@ -239,6 +239,7 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         let x = CGFloat(selectedIndex) * contentScrollView.bounds.width
         contentScrollView.setContentOffset(CGPoint(x: x, y: 0), animated: false)
         snapIndicatorToSelected()
+        syncSelectedIndexAndCenterTab()
     }
 
     private func snapIndicatorToSelected() {
