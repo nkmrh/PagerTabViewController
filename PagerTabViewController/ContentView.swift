@@ -228,6 +228,12 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         indicatorLeading?.constant = nowX
         indicatorWidth?.constant  = nowW
         tabBarStackView.layoutIfNeeded()
+
+        // タブバーもインジケータの中心に追従してスクロール
+        let midX = nowX + nowW / 2
+        let targetX = max(0, midX - tabBarScrollView.bounds.width / 2)
+        let maxX = max(0, tabBarScrollView.contentSize.width - tabBarScrollView.bounds.width)
+        tabBarScrollView.setContentOffset(CGPoint(x: min(targetX, maxX), y: 0), animated: false)
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { syncSelectedIndexAndCenterTab() }
