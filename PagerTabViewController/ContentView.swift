@@ -7,6 +7,7 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
     var viewControllers: [UIViewController] = [] {
         didSet { rebuildTabsAndPages() }
     }
+    private var vcIndexMap: [ObjectIdentifier: Int] = [:]
 
     // MARK: UI (Tab)
     private static let tabBarHeight: CGFloat = 44
@@ -109,11 +110,13 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
             tabBarStackView.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
+        vcIndexMap.removeAll()
+
         for (i, vc) in viewControllers.enumerated() {
-            let b = UIButton(type: .system)
-            b.setTitle(vc.title ?? "Tab \(i+1)", for: .normal)
-            b.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
-            b.setTitleColor(.white, for: .normal)
+            vcIndexMap[ObjectIdentifier(vc)] = i
+
+            let b = BadgeButton()
+            b.setTitle(vc.title ?? "Tab \(i+1)")
             b.tag = i
             b.addTarget(self, action: #selector(didTapTab(_:)), for: .touchUpInside)
             tabBarStackView.addArrangedSubview(b)
@@ -301,6 +304,17 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         indicatorWidthConstraint?.constant  = f.w
         tabBarStackView.layoutIfNeeded()
     }
+
+    func setBadge(_ value: Int?, for viewController: UIViewController) {
+        guard let idx = vcIndexMap[ObjectIdentifier(viewController)],
+              let btn = tabBarStackView.arrangedSubviews[idx] as? BadgeButton else { return }
+        if let value {
+            btn.badgeText = "\(value)"
+        } else {
+            btn.badgeText = nil
+        }
+        tabBarStackView.layoutIfNeeded() // 既存の index 版に委譲
+    }
 }
 
 // ==== SwiftUI Preview ====
@@ -313,6 +327,7 @@ struct PreviewWrapperViewController: UIViewControllerRepresentable {
             vc.view.backgroundColor = generateRandomColor()
             return vc
         }
+        pager.setBadge(0, for: pager.viewControllers[0])
         return pager
     }
     func updateUIViewController(_ uiViewController: UIViewControllerType, context: Context) {}
