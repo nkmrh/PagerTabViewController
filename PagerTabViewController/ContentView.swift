@@ -53,6 +53,9 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
     // MARK: State
     private var selectedIndex: Int = 0
 
+    private var tabBarHeightConstraint: NSLayoutConstraint!
+
+
     // MARK: Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -60,11 +63,12 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
         // --- Tab bar layout ---
         view.addSubview(tabBarScrollView)
         tabBarScrollView.translatesAutoresizingMaskIntoConstraints = false
+        tabBarHeightConstraint = tabBarScrollView.heightAnchor.constraint(equalToConstant: Self.tabBarHeight)
         NSLayoutConstraint.activate([
             tabBarScrollView.topAnchor.constraint(equalTo: view.topAnchor),
             tabBarScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tabBarScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabBarScrollView.heightAnchor.constraint(equalToConstant: Self.tabBarHeight),
+            tabBarHeightConstraint,
         ])
 
         tabBarScrollView.addSubview(tabBarStackView)
@@ -182,8 +186,29 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 
         // レイアウト反映
         view.layoutIfNeeded()
+        updateTabBarVisibility()
+        updatePagingInteractivity()
         setPage(index: min(selectedIndex, max(0, viewControllers.count - 1)), animated: false)
         snapIndicatorToSelected()
+    }
+
+    private func updateTabBarVisibility() {
+        let shouldHide = viewControllers.count <= 1
+        tabBarScrollView.isUserInteractionEnabled = !shouldHide
+        tabBarScrollView.isHidden = shouldHide   // 視覚的にも隠す（好みで）
+        indicatorView.isHidden = shouldHide
+        tabBarHeightConstraint.constant = shouldHide ? 0 : Self.tabBarHeight
+        view.layoutIfNeeded()
+    }
+
+    private func updatePagingInteractivity() {
+        let single = viewControllers.count <= 1
+        contentScrollView.isScrollEnabled = !single
+        contentScrollView.bounces = !single
+        contentScrollView.alwaysBounceHorizontal = !single
+        if single {
+            contentScrollView.setContentOffset(.zero, animated: false) // 念のため位置リセット
+        }
     }
 
     // MARK: Tab tap -> Scroll content
@@ -217,6 +242,7 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 
     // MARK: Indicator follow (interactive)
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard viewControllers.count > 1 else { return }  // 1枚のときは何もしない
         guard scrollView === contentScrollView,
               contentScrollView.bounds.width > 0,
               tabBarStackView.arrangedSubviews.count == viewControllers.count else { return }
@@ -322,7 +348,7 @@ final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
 struct PreviewWrapperViewController: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> some UIViewController {
         let pager = PagerTabViewController()
-        pager.viewControllers = (0..<20).map { _ in
+        pager.viewControllers = (0..<5).map { _ in
             let vc = UIViewController();
             vc.view.backgroundColor = generateRandomColor()
             return vc
