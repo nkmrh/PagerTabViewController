@@ -18,7 +18,6 @@ struct PagerTabViewControllerApp: App {
                         Image(systemName: "20.circle.fill") //タブバーの①
                     }
             }
-
         }
     }
 }
