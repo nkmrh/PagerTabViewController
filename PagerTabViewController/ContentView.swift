@@ -1,375 +1,302 @@
 import UIKit
-import SwiftUI
 
-final class PagerTabViewController: UIViewController, UIScrollViewDelegate {
+final class PagerTabViewController: UIViewController {
 
-    // MARK: Public
-    var viewControllers: [UIViewController] = [] {
-        didSet { rebuildTabsAndPages() }
-    }
-    private var vcIndexMap: [ObjectIdentifier: Int] = [:]
-
-    // MARK: UI (Tab)
-    private static let tabBarHeight: CGFloat = 44
-    private let tabBarScrollView: UIScrollView = {
-        let v = UIScrollView()
-        v.showsHorizontalScrollIndicator = false
-        v.backgroundColor = .blue
-        return v
-    }()
-    private let tabBarStackView: UIStackView = {
-        let v = UIStackView()
-        v.axis = .horizontal
-        v.distribution = .fillEqually   // 収まると等幅／はみ出たらスクロール
-        v.alignment = .fill
-        v.spacing = 8
-        return v
-    }()
-    private let indicatorView: UIView = {
-        let v = UIView()
-        v.backgroundColor = .white
-        return v
-    }()
+    private weak var pageScrollView: UIScrollView?
+    private var selectedIndex = 0
     private var indicatorLeadingConstraint: NSLayoutConstraint?
     private var indicatorWidthConstraint: NSLayoutConstraint?
 
-    // MARK: UI (Content)
-    private let contentScrollView: UIScrollView = {
-        let v = UIScrollView()
-        v.isPagingEnabled = true
-        v.bounces = true
-        v.alwaysBounceHorizontal = true
-        v.showsHorizontalScrollIndicator = false
-        v.showsVerticalScrollIndicator = false
-        v.isDirectionalLockEnabled = true
-        v.contentInsetAdjustmentBehavior = .never
-        v.decelerationRate = .fast
-        return v
+    // スワイプ開始時に記録する基準値
+    private var dragStartOffsetX: CGFloat = 0
+    private var dragStartIndex: Int = 0
+
+    // タブタップによるプログラム遷移中かどうか
+    private var isProgrammaticTransition = false
+
+    var viewControllers: [UIViewController] = [] {
+        didSet {
+            // タブを作り直す
+            tabStackView.arrangedSubviews.forEach { view in
+                tabStackView.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+
+            for vc in viewControllers {
+                let tabButton = UIButton(type: .system)
+                tabButton.setTitle(vc.title, for: .normal)
+                tabButton.addTarget(self, action: #selector(handleTabButtonTapped(_:)), for: .touchUpInside)
+                tabStackView.addArrangedSubview(tabButton)
+            }
+
+            // 最初のページ
+            if let firstVC = viewControllers.first {
+                pageVC.setViewControllers([firstVC], direction: .forward, animated: false)
+                selectedIndex = 0
+
+                Task { [weak self] in
+                    self?.snapIndicator(to: 0, animated: false)
+                }
+            }
+        }
+    }
+
+    private lazy var tabScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.backgroundColor = .green
+        return scrollView
     }()
 
-    // 保持用
-    private var pageContainers: [UIView] = []
+    private lazy var tabStackView: UIStackView = {
+        let stackView = UIStackView()
+        stackView.axis = .horizontal
+        stackView.distribution = .fillEqually
+        return stackView
+    }()
 
-    // MARK: State
-    private var selectedIndex: Int = 0
+    private lazy var indicatorView: UIView = {
+        let view = UIView()
+        view.backgroundColor = .blue
+        return view
+    }()
 
-    private var tabBarHeightConstraint: NSLayoutConstraint!
+    private lazy var pageVC: UIPageViewController = {
+        let vc = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        vc.dataSource = self
+        vc.delegate = self
+        return vc
+    }()
 
+    // MARK: - Lifecycle
 
-    // MARK: Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // --- Tab bar layout ---
-        view.addSubview(tabBarScrollView)
-        tabBarScrollView.translatesAutoresizingMaskIntoConstraints = false
-        tabBarHeightConstraint = tabBarScrollView.heightAnchor.constraint(equalToConstant: Self.tabBarHeight)
+        // タブバー
+        view.addSubview(tabScrollView)
+        tabScrollView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            tabBarScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            tabBarScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tabBarScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabBarHeightConstraint,
+            tabScrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            tabScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabScrollView.heightAnchor.constraint(equalToConstant: 44),
         ])
 
-        tabBarScrollView.addSubview(tabBarStackView)
-        tabBarStackView.translatesAutoresizingMaskIntoConstraints = false
+        tabScrollView.addSubview(tabStackView)
+        tabStackView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            tabBarStackView.topAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.topAnchor),
-            tabBarStackView.leadingAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.leadingAnchor),
-            tabBarStackView.trailingAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.trailingAnchor),
-            tabBarStackView.bottomAnchor.constraint(equalTo: tabBarScrollView.contentLayoutGuide.bottomAnchor),
-            tabBarStackView.heightAnchor.constraint(equalTo: tabBarScrollView.frameLayoutGuide.heightAnchor),
-            tabBarStackView.widthAnchor.constraint(greaterThanOrEqualTo: tabBarScrollView.frameLayoutGuide.widthAnchor),
+            tabStackView.topAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.topAnchor),
+            tabStackView.leadingAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.leadingAnchor),
+            tabStackView.trailingAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.trailingAnchor),
+            tabStackView.bottomAnchor.constraint(equalTo: tabScrollView.contentLayoutGuide.bottomAnchor),
+            tabStackView.heightAnchor.constraint(equalTo: tabScrollView.frameLayoutGuide.heightAnchor),
+            tabStackView.widthAnchor.constraint(greaterThanOrEqualTo: tabScrollView.frameLayoutGuide.widthAnchor),
         ])
-        tabBarStackView.isLayoutMarginsRelativeArrangement = true
-        tabBarStackView.layoutMargins = .init(top: 0, left: 8, bottom: 0, right: 8)
 
-        tabBarStackView.addSubview(indicatorView)
+        // インジケータ
+        tabScrollView.addSubview(indicatorView)
         indicatorView.translatesAutoresizingMaskIntoConstraints = false
-        indicatorLeadingConstraint = indicatorView.leadingAnchor.constraint(equalTo: tabBarStackView.leadingAnchor)
+        indicatorLeadingConstraint = indicatorView.leadingAnchor.constraint(equalTo: tabStackView.leadingAnchor)
         indicatorWidthConstraint = indicatorView.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
+            indicatorView.bottomAnchor.constraint(equalTo: tabStackView.bottomAnchor),
             indicatorView.heightAnchor.constraint(equalToConstant: 4),
-            indicatorView.bottomAnchor.constraint(equalTo: tabBarStackView.bottomAnchor),
             indicatorLeadingConstraint!,
             indicatorWidthConstraint!,
         ])
 
-        // --- Content layout ---
-        view.addSubview(contentScrollView)
-        contentScrollView.translatesAutoresizingMaskIntoConstraints = false
+        // Page VC
+        addChild(pageVC)
+        view.addSubview(pageVC.view)
+        pageVC.didMove(toParent: self)
+        pageVC.view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            contentScrollView.topAnchor.constraint(equalTo: tabBarScrollView.bottomAnchor),
-            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            contentScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            pageVC.view.topAnchor.constraint(equalTo: tabScrollView.bottomAnchor),
+            pageVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            pageVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            pageVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        contentScrollView.delegate = self
-    }
 
-    // MARK: Build
-    private func rebuildTabsAndPages() {
-        // Tabs
-        tabBarStackView.arrangedSubviews.forEach { v in
-            tabBarStackView.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        vcIndexMap.removeAll()
-
-        for (i, vc) in viewControllers.enumerated() {
-            vcIndexMap[ObjectIdentifier(vc)] = i
-
-            let b = BadgeButton()
-            b.setTitle(vc.title ?? "Tab \(i+1)")
-            b.tag = i
-            b.addTarget(self, action: #selector(didTapTab(_:)), for: .touchUpInside)
-            tabBarStackView.addArrangedSubview(b)
-        }
-
-        // Pages
-        // 既存子VC/ページビューを除去
-        children.forEach { child in
-            child.willMove(toParent: nil)
-            child.view.removeFromSuperview()
-            child.removeFromParent()
-        }
-        pageContainers.forEach { $0.removeFromSuperview() }
-        pageContainers.removeAll()
-
-        var previousTrailing: NSLayoutXAxisAnchor? = nil
-
-        for vc in viewControllers {
-            addChild(vc)
-
-            // 各ページのコンテナ（AutoLayout用）
-            let container = UIView()
-            container.translatesAutoresizingMaskIntoConstraints = false
-            contentScrollView.addSubview(container)
-            pageContainers.append(container)
-
-            // コンテナの制約：高さ=フレーム高さ、幅=フレーム幅（1ページ=画面幅）
-            var constraints: [NSLayoutConstraint] = [
-                container.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.topAnchor),
-                container.bottomAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor),
-                container.widthAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.widthAnchor),
-                container.heightAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.heightAnchor)
-            ]
-            if let previousTrailing {
-                constraints.append(container.leadingAnchor.constraint(equalTo: previousTrailing))
-            } else {
-                constraints.append(container.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.leadingAnchor))
-            }
-            NSLayoutConstraint.activate(constraints)
-            previousTrailing = container.trailingAnchor
-
-            // 子VCの view を端までフィット
-            let v = vc.view!
-            v.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(v)
-            NSLayoutConstraint.activate([
-                v.topAnchor.constraint(equalTo: container.topAnchor),
-                v.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                v.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                v.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-            ])
-            vc.didMove(toParent: self)
-        }
-
-        // 最後のページで contentLayoutGuide.trailing を閉じる
-        if let previousTrailing {
-            previousTrailing.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor).isActive = true
-        } else {
-            // ページが0枚のときの幅/高さゼロ問題を避ける軽い対策
-            contentScrollView.contentLayoutGuide.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor).isActive = true
-            contentScrollView.contentLayoutGuide.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor).isActive = true
-        }
-
-        // レイアウト反映
-        view.layoutIfNeeded()
-        updateTabBarVisibility()
-        updatePagingInteractivity()
-        setPage(index: min(selectedIndex, max(0, viewControllers.count - 1)), animated: false)
-        snapIndicatorToSelected()
-    }
-
-    private func updateTabBarVisibility() {
-        let shouldHide = viewControllers.count <= 1
-        tabBarScrollView.isUserInteractionEnabled = !shouldHide
-        tabBarScrollView.isHidden = shouldHide   // 視覚的にも隠す（好みで）
-        indicatorView.isHidden = shouldHide
-        tabBarHeightConstraint.constant = shouldHide ? 0 : Self.tabBarHeight
-        view.layoutIfNeeded()
-    }
-
-    private func updatePagingInteractivity() {
-        let single = viewControllers.count <= 1
-        contentScrollView.isScrollEnabled = !single
-        contentScrollView.bounces = !single
-        contentScrollView.alwaysBounceHorizontal = !single
-        if single {
-            contentScrollView.setContentOffset(.zero, animated: false) // 念のため位置リセット
-        }
-    }
-
-    // MARK: Tab tap -> Scroll content
-    @objc private func didTapTab(_ sender: UIButton) {
-        setPage(index: sender.tag, animated: true)
-    }
-
-    private func setPage(index: Int, animated: Bool) {
-        selectedIndex = index
-        let x = CGFloat(index) * contentScrollView.bounds.width
-        contentScrollView.setContentOffset(CGPoint(x: x, y: 0), animated: animated)
-        if !animated { snapIndicatorToSelected() }
-        scrollSelectedTabIntoView(animated: animated)
-    }
-
-    private func scrollSelectedTabIntoView(animated: Bool) {
-        guard selectedIndex < tabBarStackView.arrangedSubviews.count else { return }
-
-        // レイアウト確定
-        tabBarScrollView.layoutIfNeeded()
-        tabBarStackView.layoutIfNeeded()
-
-        // ★ インジケータのフレームで中央寄せ
-        let f = indicatorFrame(for: selectedIndex)
-        let midX = f.x + f.w / 2
-        let targetX = max(0, midX - tabBarScrollView.bounds.width / 2)
-        let maxX = max(0, tabBarScrollView.contentSize.width - tabBarScrollView.bounds.width)
-        tabBarScrollView.setContentOffset(CGPoint(x: min(targetX, maxX), y: 0), animated: animated)
-    }
-
-
-    // MARK: Indicator follow (interactive)
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard viewControllers.count > 1 else { return }  // 1枚のときは何もしない
-        guard scrollView === contentScrollView,
-              contentScrollView.bounds.width > 0,
-              tabBarStackView.arrangedSubviews.count == viewControllers.count else { return }
-
-        // ★ 追加：タブバー側のレイアウトも確定
-        tabBarScrollView.layoutIfNeeded()
-        tabBarStackView.layoutIfNeeded()
-
-        let pageFloat = max(0, contentScrollView.contentOffset.x / contentScrollView.bounds.width)
-        let leftIdx = Int(floor(pageFloat))
-        let progress = pageFloat - CGFloat(leftIdx)
-
-        let fromIdx = min(leftIdx, tabBarStackView.arrangedSubviews.count - 1)
-        let toIdx = min(fromIdx + 1, tabBarStackView.arrangedSubviews.count - 1)
-
-        let f0 = indicatorFrame(for: fromIdx)
-        let f1 = indicatorFrame(for: toIdx)
-        let nowX = f0.x + (f1.x - f0.x) * progress
-        let nowW = f0.w + (f1.w - f0.w) * progress
-
-        indicatorLeadingConstraint?.constant = nowX
-        indicatorWidthConstraint?.constant  = nowW
-        tabBarStackView.layoutIfNeeded()
-
-        // 追従スクロール
-        let midX = nowX + nowW / 2
-        let targetX = max(0, midX - tabBarScrollView.bounds.width / 2)
-        let maxX = max(0, tabBarScrollView.contentSize.width - tabBarScrollView.bounds.width)
-        tabBarScrollView.setContentOffset(CGPoint(x: min(targetX, maxX), y: 0), animated: false)
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { syncSelectedIndexAndCenterTab() }
-    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { syncSelectedIndexAndCenterTab() }
-
-    private func syncSelectedIndexAndCenterTab() {
-        let page = Int(round(contentScrollView.contentOffset.x / max(1, contentScrollView.bounds.width)))
-        selectedIndex = max(0, min(page, viewControllers.count - 1))
-        scrollSelectedTabIntoView(animated: true)
+        pageScrollView = pageVC.view.subviews.compactMap { $0 as? UIScrollView }.first
+        pageScrollView?.delegate = self
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        tabBarStackView.layoutIfNeeded()
-
-        // 現在ページに再スナップ（非アニメ）
-        let x = CGFloat(selectedIndex) * contentScrollView.bounds.width
-        contentScrollView.setContentOffset(CGPoint(x: x, y: 0), animated: false)
-        snapIndicatorToSelected()
-
-        // ★ 非アニメで中央寄せ（従来の sync... の代わり）
-        scrollSelectedTabIntoView(animated: false)
+        snapIndicator(to: selectedIndex, animated: false)
     }
 
-    private func indicatorFrame(for idx: Int) -> (x: CGFloat, w: CGFloat) {
-        let tabs = tabBarStackView.arrangedSubviews
-        guard idx >= 0, idx < tabs.count else { return (0, 0) }
+    // MARK: - Actions
 
-        let tab = tabs[idx]
-        let spacing = tabBarStackView.spacing
+    @objc private func handleTabButtonTapped(_ sender: UIButton) {
+        guard let nextIndex = tabStackView.arrangedSubviews.firstIndex(of: sender),
+              let currentVC = pageVC.viewControllers?.first,
+              let currentIndex = viewControllers.firstIndex(of: currentVC),
+              nextIndex != currentIndex else { return }
 
-        // 内側は spacing/2 ずつ拡張（両隣の隙間8ptを均等に分ける）
-        var left  = spacing / 2
-        var right = spacing / 2
+        isProgrammaticTransition = true
+        selectedIndex = nextIndex
 
-        // 先頭と末尾だけは外側マージンを使う（layoutMarginsRelativeArrangement を尊重）
-        if idx == 0 {
-            left = tabBarStackView.isLayoutMarginsRelativeArrangement ? tabBarStackView.layoutMargins.left : 0
-        }
-        if idx == tabs.count - 1 {
-            right = tabBarStackView.isLayoutMarginsRelativeArrangement ? tabBarStackView.layoutMargins.right : 0
-        }
+        pageVC.setViewControllers(
+            [viewControllers[nextIndex]],
+            direction: nextIndex > currentIndex ? .forward : .reverse,
+            animated: true
+        )
 
-        let x = tab.frame.minX - left
-        let w = tab.frame.width + left + right
-        return (x, w)
+        snapIndicator(to: nextIndex, animated: true)
     }
 
-    private func snapIndicatorToSelected() {
-        guard selectedIndex < tabBarStackView.arrangedSubviews.count else { return }
-        // フレーム参照前にレイアウト確定
-        tabBarStackView.layoutIfNeeded()
+    // MARK: - Indicator
 
-        let f = indicatorFrame(for: selectedIndex)
-        indicatorLeadingConstraint?.constant = f.x
-        indicatorWidthConstraint?.constant  = f.w
-        tabBarStackView.layoutIfNeeded()
-    }
+    private func snapIndicator(to index: Int, animated: Bool) {
+        guard index < tabStackView.arrangedSubviews.count else { return }
 
-    func setBadge(_ value: Int?, for viewController: UIViewController) {
-        guard let idx = vcIndexMap[ObjectIdentifier(viewController)],
-              let btn = tabBarStackView.arrangedSubviews[idx] as? BadgeButton else { return }
-        if let value {
-            btn.badgeText = "\(value)"
+        tabScrollView.layoutIfNeeded()
+        tabStackView.layoutIfNeeded()
+
+        let tab = tabStackView.arrangedSubviews[index]
+        indicatorLeadingConstraint?.constant = tab.frame.minX
+        indicatorWidthConstraint?.constant = tab.frame.width
+
+        let apply = { self.tabScrollView.layoutIfNeeded() }
+
+        if animated {
+            UIView.animate(withDuration: 0.22,
+                           delay: 0,
+                           options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: apply)
         } else {
-            btn.badgeText = nil
+            apply()
         }
-        tabBarStackView.layoutIfNeeded() // 既存の index 版に委譲
     }
 }
 
-// ==== SwiftUI Preview ====
+// MARK: - UIPageViewControllerDataSource
 
-struct PreviewWrapperViewController: UIViewControllerRepresentable {
-    let vcCount: Int
+extension PagerTabViewController: UIPageViewControllerDataSource {
+    func pageViewController(_ pageViewController: UIPageViewController,
+                            viewControllerBefore viewController: UIViewController) -> UIViewController? {
+        guard let index = viewControllers.firstIndex(of: viewController), index > 0 else { return nil }
+        return viewControllers[index - 1]
+    }
+
+    func pageViewController(_ pageViewController: UIPageViewController,
+                            viewControllerAfter viewController: UIViewController) -> UIViewController? {
+        guard let index = viewControllers.firstIndex(of: viewController),
+              index < viewControllers.count - 1 else { return nil }
+        return viewControllers[index + 1]
+    }
+}
+
+// MARK: - UIPageViewControllerDelegate
+
+extension PagerTabViewController: UIPageViewControllerDelegate {
+    func pageViewController(_ pvc: UIPageViewController,
+                            didFinishAnimating finished: Bool,
+                            previousViewControllers: [UIViewController],
+                            transitionCompleted completed: Bool) {
+
+        defer { isProgrammaticTransition = false }
+
+        if completed,
+           let current = pvc.viewControllers?.first,
+           let idx = viewControllers.firstIndex(of: current) {
+
+            selectedIndex = idx
+            if !isProgrammaticTransition {
+                snapIndicator(to: idx, animated: false)
+            }
+        } else {
+            if !isProgrammaticTransition {
+                snapIndicator(to: selectedIndex, animated: false)
+            }
+        }
+    }
+}
+
+// MARK: - UIScrollViewDelegate（スワイプ中だけ追従）
+
+extension PagerTabViewController: UIScrollViewDelegate {
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard let pageScrollView = pageScrollView,
+              scrollView === pageScrollView else { return }
+
+        dragStartOffsetX = scrollView.contentOffset.x
+        dragStartIndex = selectedIndex
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if isProgrammaticTransition { return }
+
+        guard let pageScrollView = pageScrollView,
+              scrollView === pageScrollView,
+              tabStackView.arrangedSubviews.count == viewControllers.count,
+              scrollView.bounds.width > 0 else { return }
+
+        let width = scrollView.bounds.width
+
+        // ★ スワイプ開始からの差分を進行度とする
+        let rawProgress = (scrollView.contentOffset.x - dragStartOffsetX) / width
+
+        if abs(rawProgress) < 0.001 { return }
+
+        let from = dragStartIndex
+        let to = rawProgress > 0
+            ? min(from + 1, viewControllers.count - 1)
+            : max(from - 1, 0)
+
+        if to == from { return }
+
+        let t = max(0, min(1, abs(rawProgress)))
+
+        tabScrollView.layoutIfNeeded()
+        tabStackView.layoutIfNeeded()
+
+        let fromTab = tabStackView.arrangedSubviews[from]
+        let toTab = tabStackView.arrangedSubviews[to]
+
+        indicatorLeadingConstraint?.constant =
+            fromTab.frame.minX + (toTab.frame.minX - fromTab.frame.minX) * t
+
+        indicatorWidthConstraint?.constant =
+            fromTab.frame.width + (toTab.frame.width - fromTab.frame.width) * t
+
+        UIView.performWithoutAnimation {
+            tabScrollView.layoutIfNeeded()
+        }
+    }
+}
+
+// MARK: - Preview
+
+import SwiftUI
+
+struct PagerTabViewControllerPreview: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> some UIViewController {
-        let pager = PagerTabViewController()
-        pager.viewControllers = (0..<vcCount).map { _ in
-            let vc = UIViewController();
+        let pagerTabVC = PagerTabViewController()
+        pagerTabVC.viewControllers = (0..<3).map { i in
+            let vc = UIViewController()
+            vc.title = "Tab(\(i))"
             vc.view.backgroundColor = generateRandomColor()
             return vc
         }
-        pager.setBadge(0, for: pager.viewControllers[0])
-        return pager
+        return pagerTabVC
     }
     func updateUIViewController(_ uiViewController: UIViewControllerType, context: Context) {}
 }
-
-struct ContentView: View {
-    var vcCount: Int
-    var body: some View { PreviewWrapperViewController(vcCount: vcCount) }
-}
-
-#Preview { ContentView(vcCount: 20) }
 
 private func generateRandomColor() -> UIColor {
     let r = CGFloat.random(in: 0 ... 255) / 255.0
     let g = CGFloat.random(in: 0 ... 255) / 255.0
     let b = CGFloat.random(in: 0 ... 255) / 255.0
     return UIColor(red: r, green: g, blue: b, alpha: 1.0)
+}
+
+#Preview {
+    PagerTabViewControllerPreview()
 }
