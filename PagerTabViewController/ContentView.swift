@@ -7,12 +7,13 @@ final class PagerTabViewController: UIViewController {
     private var indicatorLeadingConstraint: NSLayoutConstraint?
     private var indicatorWidthConstraint: NSLayoutConstraint?
 
-    // スワイプ開始時に記録する基準値
-    private var dragStartOffsetX: CGFloat = 0
+    // スワイプ開始時点のタブ index
     private var dragStartIndex: Int = 0
 
     // タブタップによるプログラム遷移中かどうか
     private var isProgrammaticTransition = false
+
+    // MARK: - Public
 
     var viewControllers: [UIViewController] = [] {
         didSet {
@@ -33,13 +34,14 @@ final class PagerTabViewController: UIViewController {
             if let firstVC = viewControllers.first {
                 pageVC.setViewControllers([firstVC], direction: .forward, animated: false)
                 selectedIndex = 0
-
                 Task { [weak self] in
                     self?.snapIndicator(to: 0, animated: false)
                 }
             }
         }
     }
+
+    // MARK: - UI
 
     private lazy var tabScrollView: UIScrollView = {
         let scrollView = UIScrollView()
@@ -52,6 +54,7 @@ final class PagerTabViewController: UIViewController {
         let stackView = UIStackView()
         stackView.axis = .horizontal
         stackView.distribution = .fillEqually
+        stackView.alignment = .fill
         return stackView
     }()
 
@@ -97,7 +100,7 @@ final class PagerTabViewController: UIViewController {
             tabStackView.widthAnchor.constraint(greaterThanOrEqualTo: tabScrollView.frameLayoutGuide.widthAnchor),
         ])
 
-        // インジケータ
+        // インジケーター
         tabScrollView.addSubview(indicatorView)
         indicatorView.translatesAutoresizingMaskIntoConstraints = false
         indicatorLeadingConstraint = indicatorView.leadingAnchor.constraint(equalTo: tabStackView.leadingAnchor)
@@ -109,7 +112,7 @@ final class PagerTabViewController: UIViewController {
             indicatorWidthConstraint!,
         ])
 
-        // Page VC
+        // ページ VC
         addChild(pageVC)
         view.addSubview(pageVC.view)
         pageVC.didMove(toParent: self)
@@ -121,12 +124,14 @@ final class PagerTabViewController: UIViewController {
             pageVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
+        // 内部 UIScrollView を拾う
         pageScrollView = pageVC.view.subviews.compactMap { $0 as? UIScrollView }.first
         pageScrollView?.delegate = self
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 回転などで幅が変わったときに現在のタブ下にスナップ
         snapIndicator(to: selectedIndex, animated: false)
     }
 
@@ -138,7 +143,9 @@ final class PagerTabViewController: UIViewController {
               let currentIndex = viewControllers.firstIndex(of: currentVC),
               nextIndex != currentIndex else { return }
 
+        // タブタップによる遷移フラグ ON
         isProgrammaticTransition = true
+
         selectedIndex = nextIndex
 
         pageVC.setViewControllers(
@@ -147,6 +154,7 @@ final class PagerTabViewController: UIViewController {
             animated: true
         )
 
+        // インジケーターは自前アニメ
         snapIndicator(to: nextIndex, animated: true)
     }
 
@@ -205,16 +213,10 @@ extension PagerTabViewController: UIPageViewControllerDelegate {
         if completed,
            let current = pvc.viewControllers?.first,
            let idx = viewControllers.firstIndex(of: current) {
-
             selectedIndex = idx
-            if !isProgrammaticTransition {
-                snapIndicator(to: idx, animated: false)
-            }
-        } else {
-            if !isProgrammaticTransition {
-                snapIndicator(to: selectedIndex, animated: false)
-            }
         }
+        // タブタップ・スワイプどちらでも、最後は必ずページに合わせてスナップ
+        snapIndicator(to: selectedIndex, animated: false)
     }
 }
 
@@ -226,11 +228,13 @@ extension PagerTabViewController: UIScrollViewDelegate {
         guard let pageScrollView = pageScrollView,
               scrollView === pageScrollView else { return }
 
-        dragStartOffsetX = scrollView.contentOffset.x
+        // ここで「プログラム遷移モード」は必ず解除しておく
+        isProgrammaticTransition = false
         dragStartIndex = selectedIndex
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // タブタップ由来のアニメーション中は一切触らない
         if isProgrammaticTransition { return }
 
         guard let pageScrollView = pageScrollView,
@@ -238,31 +242,32 @@ extension PagerTabViewController: UIScrollViewDelegate {
               tabStackView.arrangedSubviews.count == viewControllers.count,
               scrollView.bounds.width > 0 else { return }
 
+        // ユーザがドラッグ中のときだけ
+        guard pageScrollView.isTracking else { return }
+
         let width = scrollView.bounds.width
 
-        // ★ スワイプ開始からの差分を進行度とする
-        let rawProgress = (scrollView.contentOffset.x - dragStartOffsetX) / width
+        // 指の移動量ベースで進捗を計算（UIPageViewController の内部 offset には依存しない）
+        let translationX = pageScrollView.panGestureRecognizer.translation(in: pageScrollView).x
 
-        if abs(rawProgress) < 0.001 { return }
+        // ほとんど動いてないときは無視
+        if abs(translationX) < 0.5 { return }
 
         let from = dragStartIndex
-        let to = rawProgress > 0
-            ? min(from + 1, viewControllers.count - 1)
-            : max(from - 1, 0)
-
+        let direction: Int = translationX < 0 ? 1 : -1   // 右にスワイプすると translationX はマイナス
+        let to = max(0, min(viewControllers.count - 1, from + direction))
         if to == from { return }
 
-        let t = max(0, min(1, abs(rawProgress)))
+        let t = max(0, min(1, abs(translationX) / width))  // 0〜1 にクランプ
 
         tabScrollView.layoutIfNeeded()
         tabStackView.layoutIfNeeded()
 
         let fromTab = tabStackView.arrangedSubviews[from]
-        let toTab = tabStackView.arrangedSubviews[to]
+        let toTab   = tabStackView.arrangedSubviews[to]
 
         indicatorLeadingConstraint?.constant =
             fromTab.frame.minX + (toTab.frame.minX - fromTab.frame.minX) * t
-
         indicatorWidthConstraint?.constant =
             fromTab.frame.width + (toTab.frame.width - fromTab.frame.width) * t
 
@@ -272,6 +277,8 @@ extension PagerTabViewController: UIScrollViewDelegate {
     }
 }
 
+
+
 // MARK: - Preview
 
 import SwiftUI
@@ -279,7 +286,7 @@ import SwiftUI
 struct PagerTabViewControllerPreview: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> some UIViewController {
         let pagerTabVC = PagerTabViewController()
-        pagerTabVC.viewControllers = (0..<3).map { i in
+        pagerTabVC.viewControllers = (0..<4).map { i in
             let vc = UIViewController()
             vc.title = "Tab(\(i))"
             vc.view.backgroundColor = generateRandomColor()
